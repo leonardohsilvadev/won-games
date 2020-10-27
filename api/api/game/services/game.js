@@ -6,6 +6,7 @@
  */
 
 const axios = require('axios')
+const slugify = require('slugify')
 
 async function getGameInfo(slug) {
   const { JSDOM } = require('jsdom')
@@ -35,8 +36,18 @@ module.exports = {
     const { data: { products } } = await axios.get(url)
     // .catch(err => console.log('Erro aaa: ', err))
 
-    console.log(products[1].slug)
+    console.log(products[1])
 
-    console.log(await getGameInfo(products[1].slug))
+    await strapi.services.publisher.create({
+      name: products[0].publisher,
+      slug: slugify(products[0].publisher).toLowerCase()
+    })
+
+    await strapi.services.developer.create({
+      name: products[0].publisher,
+      slug: slugify(products[0].publisher).toLowerCase()
+    })
+
+    // console.log(await getGameInfo(products[1].slug))
   }
 };
