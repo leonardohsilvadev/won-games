@@ -8,23 +8,36 @@
 const axios = require('axios')
 const slugify = require('slugify')
 
+function Exception(e) {
+  return { e, data: e.data && e.data.errors && e.data.errors };
+}
+
+function timeout(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function getGameInfo(slug) {
-  const { JSDOM } = require('jsdom')
+  try {
+    const { JSDOM } = require('jsdom')
 
-  const body = await axios.get(`https://www.gog.com/game/${slug}`)
+    const body = await axios.get(`https://www.gog.com/game/${slug}`)
 
-  const dom = new JSDOM(body.data)
+    const dom = new JSDOM(body.data)
 
-  const ratingElement = dom.window.document.querySelector('.age-restrictions__icon use')
+    const ratingElement = dom.window.document.querySelector('.age-restrictions__icon use')
 
-  const description = dom.window.document.querySelector('.description')
+    const description = dom.window.document.querySelector('.description')
 
-  return {
-    rating: ratingElement ?
-      ratingElement.getAttribute('xlink:href').replace(/_/g, '').replace(/[^\w-]+/g, '') :
-      'LIVRE',
-    short_description: description.textContent.trim().slice(0, 160),
-    description: description.innerHTML
+    return {
+      rating: ratingElement ?
+        ratingElement.getAttribute('xlink:href').replace(/_/g, '').replace(/[^\w-]+/g, '') :
+        'LIVRE',
+      short_description: description.textContent.trim().slice(0, 160),
+      description: description.innerHTML
+    }
+  }
+  catch (e) {
+    console.log('getGameInfo Error: ', Exception(e));
   }
 
 }
@@ -42,11 +55,41 @@ async function create(name, entityName) {
   }
 }
 
+async function setImage({ image, game, field = 'cover' }) {
+  try {
+    const url = `https://${image}_bg_crop_1680x655.jpg`;
+    const { data } = await axios.get(url, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(data, 'base64');
+
+    const FormData = require('form-data');
+    const formData = new FormData();
+
+    formData.append('refId', game.id);
+    formData.append('ref', 'game');
+    formData.append('field', field);
+    formData.append('files', buffer, { filename: `${game.slug}.jpg` });
+
+    console.info(`Uploading ${field} image: ${game.slug}.jpg`);
+
+    await axios({
+      method: 'POST',
+      url: `http://${strapi.config.host}:${strapi.config.port}/upload`,
+      data: formData,
+      headers: { 'Content-Type': `multipart/form-data; boundary=${formData._boundary}` }
+    })
+  }
+  catch (e) {
+    console.log('setImage error: ', Exception(e));
+  }
+}
+
 async function createManyToManyData(products) {
   const developers = {};
   const publishers = {};
   const categories = {};
   const platforms = {};
+
+  console.log('on many to many');
 
   products.forEach(product => {
     const { developer, publisher, genres, supportedOperatingSystems } = product;
@@ -55,22 +98,21 @@ async function createManyToManyData(products) {
 
     supportedOperatingSystems &&
       supportedOperatingSystems.forEach(item => platforms[item] = true);
-
     developers[developer] = true;
     publishers[publisher] = true;
+  });
 
-    return Promise.all([
-      ...Object.keys(developers).map(name => create(name, "developer")),
-      ...Object.keys(publishers).map(name => create(name, "publisher")),
-      ...Object.keys(categories).map(name => create(name, "category")),
-      ...Object.keys(platforms).map(name => create(name, "platform"))
-    ])
-
-
-  })
+  return Promise.all([
+    ...Object.keys(developers).map(name => create(name, "developer")),
+    ...Object.keys(publishers).map(name => create(name, "publisher")),
+    ...Object.keys(categories).map(name => create(name, "category")),
+    ...Object.keys(platforms).map(name => create(name, "platform"))
+  ])
 }
 
 async function createGames(products) {
+  console.log('on create games');
+
   await Promise.all(
     products.map(async product => {
       const item = await getByName(product.title, "game");
@@ -92,6 +134,14 @@ async function createGames(products) {
           ...(await getGameInfo(product.slug))
         });
 
+        await setImage({ image: product.image, game });
+
+        await Promise.all(
+          product.gallery.slice(0, 5).map(url => setImage({ image: url, game, field: 'gallery ' }))
+        );
+
+        await timeout(2000);
+
         return game;
       }
     })
@@ -100,18 +150,17 @@ async function createGames(products) {
 
 module.exports = {
   populate: async (params) => {
-    const url = 'https://www.gog.com/games/ajax/filtered?mediaType=game&page=1&sort=popularity';
+    try {
+      const url = 'https://www.gog.com/games/ajax/filtered?mediaType=game&page=1&sort=popularity';
 
-    const { data: { products } } = await axios.get(url)
+      const { data: { products } } = await axios.get(url)
 
-    console.log(products[5]);
-
-    await createManyToManyData([products[4], products[5]])
-
-    await createGames([products[4], products[5]])
-
-    // await create(products[2].publisher, "publisher")
-    // await create(products[2].publisher, "developer")
+      await createManyToManyData(products)
+      await createGames(products)
+    }
+    catch (e) {
+      console.log('populate error: ', Exception(e));
+    }
 
   }
 };
