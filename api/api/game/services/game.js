@@ -52,7 +52,7 @@ async function create(name, entityName) {
   const item = await getByName(name, entityName)
 
   if (!item) {
-    return await strapi.services[entityName].create({ name, slug: slugify(name, { lower: true }) })
+    return await strapi.services[entityName].create({ name, slug: slugify(name, { strict: true, lower: true }) })
   }
 }
 
